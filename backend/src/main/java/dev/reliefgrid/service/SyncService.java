@@ -1,0 +1,11 @@
+package dev.reliefgrid.service;
+import dev.reliefgrid.api.Dto; import dev.reliefgrid.model.*; import dev.reliefgrid.repo.*;
+import org.springframework.stereotype.Service; import org.springframework.transaction.annotation.*; import org.springframework.dao.DataIntegrityViolationException;
+import java.nio.charset.StandardCharsets; import java.security.MessageDigest; import java.util.*;
+@Service public class SyncService {
+ private final SyncRecordRepository sync;private final CitizenRequestRepository requests;private final ShelterRepository shelters;private final AuditLogRepository audits;private final Events events;
+ public SyncService(SyncRecordRepository s,CitizenRequestRepository r,ShelterRepository sh,AuditLogRepository a,Events e){sync=s;requests=r;shelters=sh;audits=a;events=e;}
+ private static String hash(Dto.RequestCreate r){try{String canonical=r.shelterId()+"|"+r.category()+"|"+r.quantity()+"|"+r.urgency();byte[] bytes=MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));return HexFormat.of().formatHex(bytes);}catch(Exception e){throw new IllegalStateException("Hash error");}}
+ @Transactional(propagation=Propagation.REQUIRES_NEW) public Dto.SyncResult one(Dto.SyncItem item){if(item.key()==null||item.key().isBlank()||item.key().length()>100||item.request()==null)throw new IllegalArgumentException("Invalid sync item");Dto.RequestCreate d=item.request();if(d.shelterId()==null||d.category()==null||d.quantity()<1||d.urgency()<1||d.urgency()>5)throw new IllegalArgumentException("Invalid request data");String h=hash(d);Optional<SyncRecord> existing=sync.findBySyncKey(item.key());if(existing.isPresent()){SyncRecord x=existing.get();if(!x.payloadHash.equals(h))return new Dto.SyncResult(item.key(),"CONFLICT",x.request.id,"Same idempotency key, different payload");return new Dto.SyncResult(item.key(),"REPLAY",x.request.id,"Already accepted");}
+ Shelter shelter=shelters.findById(d.shelterId()).orElseThrow(()->new IllegalArgumentException("Shelter not found"));CitizenRequest r=requests.saveAndFlush(new CitizenRequest(shelter,d.category(),d.quantity(),d.urgency(),item.key()));sync.saveAndFlush(new SyncRecord(item.key(),h,r));audits.save(new AuditLog("OFFLINE_SYNC_ACCEPTED","key="+item.key()+" request="+r.id));events.changed("sync");return new Dto.SyncResult(item.key(),"CREATED",r.id,"Synchronized");}
+}

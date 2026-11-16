@@ -1,0 +1,11 @@
+package dev.reliefgrid.service;
+import dev.reliefgrid.repo.*; import dev.reliefgrid.model.*; import dev.reliefgrid.api.Dto;
+import org.springframework.stereotype.Service; import org.springframework.transaction.annotation.Transactional; import java.util.*;
+@Service public class ResourceService {
+ private final ResourceStockRepository stocks;private final ShelterRepository shelters;private final CitizenRequestRepository requests;private final VolunteerRepository volunteers;private final AuditLogRepository audits; private final Events events;
+ public ResourceService(ResourceStockRepository s,ShelterRepository sh,CitizenRequestRepository r,VolunteerRepository v,AuditLogRepository a,Events e){stocks=s;shelters=sh;requests=r;volunteers=v;audits=a;events=e;}
+ public List<ResourceStock> stocks(){return stocks.findAll();}public List<CitizenRequest> requests(){return requests.findAll();}public List<Volunteer> volunteers(){return volunteers.findAll();}public List<Shelter> shelters(){return shelters.findAll();}
+ @Transactional public CitizenRequest addRequest(Dto.RequestCreate dto,String source){Shelter sh=shelters.findById(dto.shelterId()).orElseThrow(()->new IllegalArgumentException("Shelter not found"));CitizenRequest r=requests.save(new CitizenRequest(sh,dto.category(),dto.quantity(),dto.urgency(),source));audits.save(new AuditLog("REQUEST_CREATED","Request "+r.id+" quantity="+r.quantity));events.changed("requests");return r;}
+ @Transactional public ResourceStock addStock(Dto.StockCreate dto){Shelter sh=shelters.findById(dto.shelterId()).orElseThrow(()->new IllegalArgumentException("Shelter not found"));ResourceStock s=stocks.findAll().stream().filter(x->x.shelter.id.equals(sh.id)&&x.category==dto.category()).findFirst().orElse(null);if(s==null)s=new ResourceStock(sh,dto.category(),0);s.available+=dto.available();stocks.save(s);audits.save(new AuditLog("STOCK_RECEIVED","Stock "+s.id+" added="+dto.available()));events.changed("stock");return s;}
+ @Transactional public Volunteer addVolunteer(Dto.VolunteerCreate dto){Shelter sh=shelters.findById(dto.shelterId()).orElseThrow(()->new IllegalArgumentException("Shelter not found"));Volunteer v=volunteers.save(new Volunteer(dto.displayName(),sh,dto.capacity()));audits.save(new AuditLog("VOLUNTEER_CREATED","Volunteer "+v.id));events.changed("volunteers");return v;}
+}
